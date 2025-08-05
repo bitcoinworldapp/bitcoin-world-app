@@ -1,0 +1,27 @@
+[project]
+name        = "bitcoinworld-cont"
+telemetry   = true
+cache_dir   = "./.cache"
+requirements = []
+
+[editor]
+auto-pairs = false 
+
+[networks]
+local   = { url = "http://localhost:20443" }
+testnet = { url = "https://stacks-node-api.testnet.stacks.co" }
+mainnet = { url = "https://stacks-node-api.mainnet.stacks.co" }
+
+# Compile-time trait checker
+[contracts.sip010-ft]
+path = "contracts/sip010-ft.clar"
+
+# Our sbtc implementation
+[contracts.sbtc]
+path       = "contracts/sbtc.clar"
+depends_on = ["sip010-ft"]
+
+# Market that calls into sbtc
+[contracts.market]
+path       = "contracts/market.clar"
+depends_on = ["sbtc"]

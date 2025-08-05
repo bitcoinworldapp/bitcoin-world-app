@@ -1,0 +1,27 @@
+{
+  "name": "bitcoinworld-cont-tests",
+  "version": "1.0.0",
+  "description": "Run unit tests on this project.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "test:report": "vitest run -- --coverage --costs",
+    "test:watch": "chokidar \"tests/**/*.ts\" \"contracts/**/*.clar\" -c \"npm run test:report\""
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@stacks/transactions": "^7.0.6",
+    "chokidar-cli": "^3.0.0",
+    "vitest": "^3.1.3",
+    "vitest-environment-clarinet": "^2.3.0"
+  },
+  "devDependencies": {
+    "@hirosystems/clarinet-sdk": "^3.4.0",
+    "@types/node": "^24.2.0",
+    "matchers": "^0.0.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  }
+}
