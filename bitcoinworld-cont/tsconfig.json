@@ -6,6 +6,7 @@
     "module": "ESNext",
     "lib": ["ESNext"],
     "skipLibCheck": true,
+    "typeRoots": ["./types", "./node_modules/@types"],
 
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
@@ -20,6 +21,7 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": [
+    "types",
     "node_modules/@hirosystems/clarinet-sdk/vitest-helpers/src",
     "tests",
     "tests/**/*.ts"

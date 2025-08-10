@@ -1,0 +1,32 @@
+---
+id: 0
+name: Testnet deployment
+network: testnet
+stacks-node: "https://api.testnet.hiro.so"
+bitcoin-node: "http://blockstack:blockstacksystem@bitcoind.testnet.stacks.co:18332"
+plan:
+  batches:
+    - id: 0
+      transactions:
+        - contract-publish:
+            contract-name: sip010-ft
+            expected-sender: ST1PSHE32YTEE21FGYEVTA24N681KRGSQM4VF9XZP
+            cost: 5920
+            path: "contracts\\sip010-ft.clar"
+            anchor-block-only: true
+            clarity-version: 1
+        - contract-publish:
+            contract-name: sbtc
+            expected-sender: ST1PSHE32YTEE21FGYEVTA24N681KRGSQM4VF9XZP
+            cost: 18160
+            path: "contracts\\sbtc.clar"
+            anchor-block-only: true
+            clarity-version: 1
+        - contract-publish:
+            contract-name: market
+            expected-sender: ST1PSHE32YTEE21FGYEVTA24N681KRGSQM4VF9XZP
+            cost: 97000
+            path: "contracts\\market.clar"
+            anchor-block-only: true
+            clarity-version: 1
+      epoch: "2.05"
