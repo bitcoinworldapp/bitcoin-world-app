@@ -1,44 +1,40 @@
 ;; ------------------------------------------------------------
-;; sBTCminimal SIP-010 fungible-token implementation
+;; sBTC SIP-010 (+burn) minimo y compatible con tu setup actual
 ;; ------------------------------------------------------------
-
-;; Import and implement the SIP-010 trait
 (use-trait sip010-ft .sip010-ft.sip010-ft)
-(impl-trait  .sip010-ft.sip010-ft)
+(impl-trait .sip010-ft.sip010-ft)
 
-;; Error and owner constants
 (define-constant err-owner-only (err u100))
-(define-constant contract-owner tx-sender)          ;; deployer = owner
 
-;; The token
+(define-constant contract-owner tx-sender) ;; deployer = owner
+
 (define-fungible-token sbtc)
 
-;; ------------------------------------------------------------
-;; Trait-required public entry points
-;; ------------------------------------------------------------
+;; ---- Trait-required ----
+
+;; El que transfiere debe firmar: sender == tx-sender
 (define-public (transfer (amount uint) (sender principal) (recipient principal))
   (begin
-    ;; permitimos transferencias firmadas por el propietario original
-    ;; o por el contrato `market`
-    (asserts! (or
-                 (is-eq sender tx-sender)
-                 (is-eq tx-sender .market))   ;; aqu .market es market-principal
-              err-owner-only)
-    (ft-transfer? sbtc amount sender recipient)))
+    (asserts! (is-eq sender tx-sender) err-owner-only)
+    (ft-transfer? sbtc amount sender recipient)
+  )
+)
 
 (define-public (mint (amount uint) (recipient principal))
   (begin
     (asserts! (is-eq tx-sender contract-owner) err-owner-only)
-    (ft-mint? sbtc amount recipient)))                 ;; (response bool uint)
+    (ft-mint? sbtc amount recipient)
+  )
+)
 
 (define-public (burn (amount uint))
-  (ft-burn? sbtc amount tx-sender))                    ;; (response bool uint)
+  (ft-burn? sbtc amount tx-sender)
+)
 
-;; ------------------------------------------------------------
-;; Read-only helpers (also required by the trait)
-;; ------------------------------------------------------------
 (define-read-only (get-balance (who principal))
-  (ok (ft-get-balance sbtc who)))                      ;; (response uint uint)
+  (ok (ft-get-balance sbtc who))
+)
 
 (define-read-only (get-supply)
-  (ok (ft-get-supply sbtc)))                           ;; (response uint uint)
+  (ok (ft-get-supply sbtc))
+)

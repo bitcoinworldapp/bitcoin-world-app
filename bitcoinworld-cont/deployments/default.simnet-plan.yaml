@@ -62,16 +62,16 @@ plan:
         - emulated-contract-publish:
             contract-name: sip010-ft
             emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-            path: "contracts\\sip010-ft.clar"
-            clarity-version: 1
+            path: contracts/sip010-ft.clar
+            clarity-version: 2
         - emulated-contract-publish:
             contract-name: sbtc
             emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-            path: "contracts\\sbtc.clar"
-            clarity-version: 1
+            path: contracts/sbtc.clar
+            clarity-version: 2
         - emulated-contract-publish:
             contract-name: market
             emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-            path: "contracts\\market.clar"
-            clarity-version: 1
-      epoch: "2.05"
+            path: contracts/market.clar
+            clarity-version: 2
+      epoch: "2.1"

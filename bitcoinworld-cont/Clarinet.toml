@@ -5,7 +5,7 @@ cache_dir   = "./.cache"
 requirements = []
 
 [editor]
-auto-pairs = false 
+auto-pairs = false
 
 [networks]
 local   = { url = "http://localhost:20443" }
@@ -15,13 +15,19 @@ mainnet = { url = "https://stacks-node-api.mainnet.stacks.co" }
 # Compile-time trait checker
 [contracts.sip010-ft]
 path = "contracts/sip010-ft.clar"
+clarity_version = 2
+epoch = "2.1"
 
 # Our sbtc implementation
 [contracts.sbtc]
 path       = "contracts/sbtc.clar"
 depends_on = ["sip010-ft"]
+clarity_version = 2
+epoch = "2.1"
 
 # Market that calls into sbtc
 [contracts.market]
 path       = "contracts/market.clar"
 depends_on = ["sbtc"]
+clarity_version = 2
+epoch = "2.1"
