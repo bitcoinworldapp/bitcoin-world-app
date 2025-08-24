@@ -164,12 +164,17 @@
     (+ SCALE-INT (+ x (+ (/ x2 i2) (/ x3 i6))))))
 
 ;; ln approx around 1: ln(1+z) ~ z - z^2/2 + z^3/3
+;; ln(y) con y escalado por SCALE; devuelve ln(y/SCALE) * SCALE
 (define-private (ln-fixed (y int))
-  (let ((z  (- y SCALE-INT))
-        (z1 (/ z SCALE-INT))
-        (z2 (/ (* z1 z1) SCALE-INT))
-        (z3 (/ (* z2 z1) SCALE-INT)))
-    (+ z1 (- (/ z2 i2)) (/ z3 i3))))
+  (let (
+    (z  (- y SCALE-INT))              ;; z = (y - 1)*SCALE  (u escalado)
+    (z2 (/ (* z z) SCALE-INT))        ;; z^2 / SCALE
+    (z3 (/ (* z2 z) SCALE-INT))       ;; z^3 / SCALE^2
+  )
+    ;; serie: ln(1+u) = u - u^2/2 + u^3/3  (todo escalado por SCALE)
+    (+ z (- (/ z2 i2)) (/ z3 i3))
+  )
+)
 
 (define-private (b-int) (to-int (var-get b)))
 
