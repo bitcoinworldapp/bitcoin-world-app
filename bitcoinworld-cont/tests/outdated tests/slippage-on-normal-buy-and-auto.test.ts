@@ -1,6 +1,6 @@
 // tests/slippage-on-normal-buy-and-auto.test.ts
 import { describe, it, expect } from "vitest";
-import { simnet, cvToUint, addr, Cl } from "./helpers";
+import { simnet, cvToUint, addr, Cl } from "../helpers";
 
 function unwrapOkTuple(cv: any): Record<string, any> {
   if (cv.type === "err" || cv.type === "responseErr") {

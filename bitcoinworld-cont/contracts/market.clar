@@ -2,9 +2,10 @@
 ;; File: contracts/market.clar
 ;; Binary YES/NO LMSR market with admin controls, per-user caps,
 ;; auto-buy with max-cost (slippage guard), and fee routing.
+;; NAME-AGNOSTIC (Option B): stores SELF principal at init.
 ;; -------------------------------------------------------------------
 
-(define-constant market-principal .market)
+;; (define-constant market-principal .market)   ;; eliminado
 
 ;; Ajusta este ADMIN si cambia el deployer:
 (define-constant ADMIN 'ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM)
@@ -27,6 +28,9 @@
 ;; Limite opcional por operacion (0 = sin limite)
 (define-data-var max-trade uint u0)
 
+;; NUEVO: principal propio del contrato (se setea en `create`)
+(define-data-var SELF principal ADMIN)
+
 ;; ------------------------- Caps & spent -----------------------------
 (define-map user-caps  { user: principal } { cap: uint })
 (define-map user-spent { user: principal } { spent: uint })
@@ -34,17 +38,16 @@
 (define-read-only (get-cap (who principal))
   (default-to u0 (get cap (map-get? user-caps { user: who }))))
 
+
 (define-read-only (get-spent (who principal))
   (default-to u0 (get spent (map-get? user-spent { user: who }))))
 
-;; Cambiamos a bool (no response)
 (define-private (bump-cap-if-needed (who principal) (target-cap uint))
   (let ((cur (default-to u0 (get cap (map-get? user-caps { user: who })))))
     (if (> target-cap cur)
         (begin (map-set user-caps { user: who } { cap: target-cap }) true)
         true)))
 
-;; Cambiamos a bool (no response)
 (define-private (add-spent (who principal) (delta uint))
   (let ((cur (default-to u0 (get spent (map-get? user-spent { user: who }))))
         (nw  (+ cur delta)))
@@ -79,7 +82,6 @@
 (define-private (only-admin)
   (begin (asserts! (is-eq tx-sender ADMIN) (err u706)) (ok true)))
 
-;; Devuelve siempre response
 (define-private (guard-not-locked)
   (if (is-eq (var-get fees-locked) false)
       (ok true)
@@ -157,28 +159,23 @@
 (define-constant i3 (to-int u3))
 (define-constant i6 (to-int u6))
 
-;; exp approx: 1 + x + x^2/2 + x^3/6
 (define-private (exp-fixed (x int))
   (let ((x2 (/ (* x x) SCALE-INT))
         (x3 (/ (* x2 x) SCALE-INT)))
     (+ SCALE-INT (+ x (+ (/ x2 i2) (/ x3 i6))))))
 
-;; ln approx around 1: ln(1+z) ~ z - z^2/2 + z^3/3
-;; ln(y) con y escalado por SCALE; devuelve ln(y/SCALE) * SCALE
 (define-private (ln-fixed (y int))
   (let (
-    (z  (- y SCALE-INT))              ;; z = (y - 1)*SCALE  (u escalado)
-    (z2 (/ (* z z) SCALE-INT))        ;; z^2 / SCALE
-    (z3 (/ (* z2 z) SCALE-INT))       ;; z^3 / SCALE^2
+    (z  (- y SCALE-INT))
+    (z2 (/ (* z z) SCALE-INT))
+    (z3 (/ (* z2 z) SCALE-INT))
   )
-    ;; serie: ln(1+u) = u - u^2/2 + u^3/3  (todo escalado por SCALE)
     (+ z (- (/ z2 i2)) (/ z3 i3))
   )
 )
 
 (define-private (b-int) (to-int (var-get b)))
 
-;; Cost C(qY, qN) = b * ln( exp(qY/b) + exp(qN/b) )  (int)
 (define-private (cost-fn (qY uint) (qN uint))
   (let ((B-INT (b-int))
         (b>0   (> (var-get b) u0))
@@ -190,7 +187,6 @@
         (lnsum (ln-fixed sum)))
     (if b>0 (/ (* B-INT lnsum) SCALE-INT) 0)))
 
-;; Incremental cost (floor a 1 si amt>0)
 (define-private (calculate-cost (qY uint) (qN uint) (amt uint) (yes? bool))
   (let ((base (cost-fn qY qN))
         (new  (if yes? (cost-fn (+ qY amt) qN) (cost-fn qY (+ qN amt))))
@@ -201,7 +197,6 @@
             u1)
         u0)))
 
-;; b = floor(pool / ln2)
 (define-private (recompute-b)
   (let ((p (var-get pool)))
     (if (> p u0)
@@ -215,8 +210,13 @@
     (try! (only-admin))
     (asserts! (is-eq (var-get initialized) false) (err u700))
     (asserts! (> initial-liquidity u0) (err u701))
-    ;; ADMIN to market
-    (try! (contract-call? .sbtc transfer initial-liquidity ADMIN market-principal))
+
+    ;; Captura del principal propio del contrato
+    (as-contract (var-set SELF tx-sender))
+
+    ;; ADMIN -> CONTRATO (recipient = SELF)
+    (try! (contract-call? .sbtc transfer initial-liquidity ADMIN (var-get SELF)))
+
     (var-set pool (+ (var-get pool) initial-liquidity))
     (recompute-b)
     (var-set initialized true)
@@ -226,7 +226,8 @@
   (begin
     (try! (only-admin))
     (asserts! (> amount u0) (err u702))
-    (try! (contract-call? .sbtc transfer amount ADMIN market-principal))
+    ;; ADMIN -> CONTRATO (recipient = SELF)
+    (try! (contract-call? .sbtc transfer amount ADMIN (var-get SELF)))
     (var-set pool (+ (var-get pool) amount))
     (recompute-b)
     (ok (var-get b))))
@@ -257,9 +258,10 @@
           (asserts! (> cap u0) (err u730))
           (asserts! (<= (+ spent total) cap) (err u731))
 
-          (try! (contract-call? .sbtc transfer base tx-sender market-principal))
+          ;; USER -> CONTRATO
+          (try! (contract-call? .sbtc transfer base tx-sender (var-get SELF)))
 
-          ;; protocolo (bool en ambas ramas)
+          ;; protocolo
           (if (> feeP u0)
             (begin
               (if (> drip u0) (try! (contract-call? .sbtc transfer drip tx-sender (var-get DRIP_VAULT))) true)
@@ -268,7 +270,7 @@
               true)
             true)
 
-          ;; LP (bool en ambas ramas)
+          ;; LP
           (if (> feeL u0)
             (try! (contract-call? .sbtc transfer feeL tx-sender (var-get LP_WALLET)))
             true)
@@ -305,7 +307,8 @@
           (asserts! (> cap u0) (err u730))
           (asserts! (<= (+ spent total) cap) (err u731))
 
-          (try! (contract-call? .sbtc transfer base tx-sender market-principal))
+          ;; USER -> CONTRATO
+          (try! (contract-call? .sbtc transfer base tx-sender (var-get SELF)))
 
           ;; protocolo
           (if (> feeP u0)
@@ -335,7 +338,7 @@
     (try! (check-trade-limit amount))
     (asserts! (> (var-get b) u0) (err u703))
     (asserts! (> amount u0) (err u704))
-    (asserts! (> max-cost u0) ERR-SLIPPAGE)
+    (asserts! (> max-cost u0) (err u732))
     (bump-cap-if-needed tx-sender target-cap)
 
     (let (
@@ -352,13 +355,14 @@
         (team (- feeP (+ drip brc)))
         (total (+ base (+ feeP feeL)))
       )
-        (asserts! (<= total max-cost) ERR-SLIPPAGE)
+        (asserts! (<= total max-cost) (err u732))
 
         (let ((cap (get-cap tx-sender)) (spent (get-spent tx-sender)))
           (asserts! (> cap u0) (err u730))
           (asserts! (<= (+ spent total) cap) (err u731))
 
-          (try! (contract-call? .sbtc transfer base tx-sender market-principal))
+          ;; USER -> CONTRATO
+          (try! (contract-call? .sbtc transfer base tx-sender (var-get SELF)))
 
           ;; protocolo
           (if (> feeP u0)
@@ -387,7 +391,7 @@
     (try! (check-trade-limit amount))
     (asserts! (> (var-get b) u0) (err u703))
     (asserts! (> amount u0) (err u704))
-    (asserts! (> max-cost u0) ERR-SLIPPAGE)
+    (asserts! (> max-cost u0) (err u732))
     (bump-cap-if-needed tx-sender target-cap)
 
     (let (
@@ -404,13 +408,14 @@
         (team (- feeP (+ drip brc)))
         (total (+ base (+ feeP feeL)))
       )
-        (asserts! (<= total max-cost) ERR-SLIPPAGE)
+        (asserts! (<= total max-cost) (err u732))
 
         (let ((cap (get-cap tx-sender)) (spent (get-spent tx-sender)))
           (asserts! (> cap u0) (err u730))
           (asserts! (<= (+ spent total) cap) (err u731))
 
-          (try! (contract-call? .sbtc transfer base tx-sender market-principal))
+          ;; USER -> CONTRATO
+          (try! (contract-call? .sbtc transfer base tx-sender (var-get SELF)))
 
           ;; protocolo
           (if (> feeP u0)
@@ -459,7 +464,8 @@
           (payout  (if is-last p raw)))
       (asserts! (> payout u0) (err u2))
       (try! (ft-burn? yes-token balance tx-sender))
-      (as-contract (try! (contract-call? .sbtc transfer payout market-principal rcpt)))
+      ;; CONTRATO -> USUARIO (sender = contrato)
+      (as-contract (try! (contract-call? .sbtc transfer payout tx-sender rcpt)))
       (var-set pool (- p payout))
       (recompute-b)
       (ok payout))))
@@ -475,7 +481,8 @@
           (payout  (if is-last p raw)))
       (asserts! (> payout u0) (err u2))
       (try! (ft-burn? no-token balance tx-sender))
-      (as-contract (try! (contract-call? .sbtc transfer payout market-principal rcpt)))
+      ;; CONTRATO -> USUARIO (sender = contrato)
+      (as-contract (try! (contract-call? .sbtc transfer payout tx-sender rcpt)))
       (var-set pool (- p payout))
       (recompute-b)
       (ok payout))))
@@ -492,7 +499,8 @@
           (asserts! (is-eq ys u0) (err u708))
           (asserts! (is-eq ns u0) (err u709)))
       (asserts! (> p u0) (err u710))
-      (as-contract (try! (contract-call? .sbtc transfer p market-principal ADMIN)))
+      ;; CONTRATO -> ADMIN (sender = contrato)
+      (as-contract (try! (contract-call? .sbtc transfer p tx-sender ADMIN)))
       (var-set pool u0)
       (recompute-b)
       (ok true))))
@@ -543,3 +551,6 @@
   { drip: (var-get DRIP_VAULT), brc20: (var-get BRC20_VAULT),
     team: (var-get TEAM_WALLET), lp: (var-get LP_WALLET),
     locked: (var-get fees-locked) })
+
+;; Opcional util para el back/indexer
+(define-read-only (get-self) (var-get SELF))

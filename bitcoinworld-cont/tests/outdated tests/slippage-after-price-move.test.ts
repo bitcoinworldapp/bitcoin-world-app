@@ -1,6 +1,6 @@
 // tests/slippage-after-price-move.test.ts
 import { describe, it, expect } from "vitest";
-import { simnet, cvToUint, addr, Cl } from "./helpers";
+import { simnet, cvToUint, addr, Cl } from "../helpers";
 
 function unwrapQuote(res:any){
   const r = res?.result ?? res;

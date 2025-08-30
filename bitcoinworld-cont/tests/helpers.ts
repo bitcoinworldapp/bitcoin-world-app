@@ -33,3 +33,39 @@ export function cvToUint(cv: any): number {
 export function principal(address: string) {
   return Clarity.principal(address);
 }
+// --- QUOTES helpers robustos (soportan distintas formas del CV) ---
+export function unwrapQuote(res: any) {
+  const root = res?.result ?? res;
+
+  // capa 1: ok/err wrapper
+  let v: any = root?.value ?? root?.data ?? root;
+
+  // capa 2: tuple wrapper
+  if (v?.type === "tuple" && v?.value) v = v.value;
+
+  // capa 3: a veces viene como { data: { cost, total, ... } }
+  if (v?.data && (v.data.total || v.data.cost)) v = v.data;
+
+  const pick = (k: string) => {
+    const f = v?.[k];
+    const val = f?.value ?? f;
+    if (val === undefined) {
+      throw new Error(`Quote missing ${k}: ${JSON.stringify(root)}`);
+    }
+    return Number(val);
+  };
+
+  return {
+    cost:        pick("cost"),
+    feeProtocol: pick("feeProtocol"),
+    feeLP:       pick("feeLP"),
+    drip:        pick("drip"),
+    brc20:       pick("brc20"),
+    team:        pick("team"),
+    total:       pick("total"),
+  };
+}
+
+export function quoteTotal(res: any): number {
+  return unwrapQuote(res).total;
+}

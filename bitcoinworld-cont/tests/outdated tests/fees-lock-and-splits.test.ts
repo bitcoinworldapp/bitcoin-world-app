@@ -1,6 +1,6 @@
 // tests/fees-lock-and-splits.test.ts
 import { describe, it, expect } from "vitest";
-import { simnet, cvToUint, addr, Cl } from "./helpers";
+import { simnet, cvToUint, addr, Cl } from "../helpers";
 
 // Desempaqueta un (ok { tuple }) desde un CV en distintas variantes del SDK
 function unwrapOkTuple(cv: any): Record<string, any> {

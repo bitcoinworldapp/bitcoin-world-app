@@ -1,6 +1,6 @@
 // tests/caps-multi-buys-spent.test.ts
 import { describe, it, expect } from "vitest";
-import { simnet, cvToUint, addr, Cl } from "./helpers";
+import { simnet, cvToUint, addr, Cl } from "../helpers";
 
 const U = (r:any) => cvToUint(r.result);
 
