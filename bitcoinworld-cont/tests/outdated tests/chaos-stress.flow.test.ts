@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { simnet, addr, Cl, cvToUint, unwrapQuote } from "./helpers";
+import { simnet, addr, Cl, cvToUint, unwrapQuote } from "../helpers";
 
 describe("Caos controlado: caps (auto vs normal), slippage, pause/unpause, max-trade, locks, resolve/redeem con last-sweep y withdraw gating", () => {
   it("flujo largo con errores esperados y validaciones de estado (u2 antes del last-sweep, u105 después)", () => {

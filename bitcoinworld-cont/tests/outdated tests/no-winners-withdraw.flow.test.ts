@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { simnet, addr, Cl, cvToUint, unwrapQuote } from "./helpers";
+import { simnet, addr, Cl, cvToUint, unwrapQuote } from "../helpers";
 
 describe("No winners: withdraw-surplus libera el pool al admin", () => {
   it("bloquea redeem (u105) y permite withdraw-surplus; pool queda a 0", () => {

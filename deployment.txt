@@ -1,0 +1,90 @@
+                                   ┌───────────────────────────────────────────────────────────┐
+                                   │                         INTERNET                          │
+                                   │                                                           │
+                                   │   Usuario/Navegador                                       │
+                                   └───────────────▲───────────────────────────▲───────────────┘
+                                                   │                           │
+                                  (Front estático) │                           │ (API + WS)
+                                                   │                           │
+┌──────────────────────────────────────────────────┼───────────────────────────┼──────────────────────────────────────────────────┐
+│                                                  │                           │                                                  │
+│                                     ┌────────────┴───────────┐   ┌───────────┴───────────┐                                     │
+│                                     │        Route 53        │   │        Route 53        │                                     │
+│                                     │   app.tu-dominio.com   │   │   api.tu-dominio.com   │                                     │
+│                                     └────────────┬───────────┘   └───────────┬────────────┘                                     │
+│                                                  │                           │                                                  │
+│                         ┌────────────────────────▼─────────────┐   ┌─────────▼───────────┐                                      │
+│ Edge / Borde            │           CloudFront (CDN)           │   │   ALB (Load Balancer│  ◄── WAF (reglas L7/rate/bots)       │
+│ + Seguridad             │  + WAF  + TLS (ACM) + headers (CSP)  │   │   HTTP/HTTPS + WS   │                                      │
+│                         └───────────────┬──────────────────────┘   └─────────┬───────────┘                                      │
+│                                         │                                      ▲                                                │
+│                                         │ (origin)                             │ (health checks, sticky opcional)               │
+│                         ┌───────────────▼───────────────┐                      │                                                │
+│                         │               S3              │                      │                                                │
+│                         │     (SPA: HTML/JS/CSS/img)    │                      │                                                │
+│                         └───────────────────────────────┘                      │                                                │
+│                                                                 ┌──────────────┴──────────────┐                                   │
+│                                                                 │          VPC (AWS)         │                                   │
+│                                                                 │  (red privada multi-AZ)    │                                   │
+│                                                                 └──────────────┬──────────────┘                                   │
+│                                                                                │                                                  │
+│      ┌─────────────────────────────────────────────────────────────────────────┼────────────────────────────────────────────┐      │
+│      │                                                                         │                                            │      │
+│      │                                 Subredes PÚBLICAS                       │                        Subredes PRIVADAS   │      │
+│      │                                                                         │                                            │      │
+│      │     ┌───────────────────────────┐                 ┌─────────────────────▼──────────────────┐                         │      │
+│      │     │      NAT Gateways         │  (salida a      │     ECS (Fargate) – Servicio API       │                         │      │
+│      │     │ (1-3 AZ, según entorno)   │  Internet p/    │  Tareas Node/Express + Socket.IO       │                         │      │
+│      │     └───────────────────────────┘  privados)      │  - SG: solo desde ALB                  │                         │      │
+│      │                                                  │  - Logs → CloudWatch                    │                         │      │
+│      │                                                  │  - Secrets → Secrets Manager / SSM      │                         │      │
+│      │                                                  └───────────────┬─────────────────────────┘                         │      │
+│      │                                                                  │ (TCP interno)                                      │      │
+│      │                                                  ┌───────────────▼─────────────────────────┐                         │      │
+│      │                                                  │  (opcional) ElastiCache Redis           │                         │      │
+│      │                                                  │  - Adapter socket.io / rate limits      │                         │      │
+│      │                                                  └───────────────┬─────────────────────────┘                         │      │
+│      │                                                                  │                                                      │      │
+│      │                                                  ┌───────────────▼─────────────────────────┐                         │      │
+│      │                                                  │   ECS (Fargate) – Servicio INDEXER      │                         │      │
+│      │                                                  │   - Lee cadena/APIs externas            │                         │      │
+│      │                                                  │   - Persiste en Mongo                   │                         │      │
+│      │                                                  │   - Emite eventos (vía API/Redis)       │                         │      │
+│      │                                                  └───────────────┬─────────────────────────┘                         │      │
+│      │                                                                  │                                                      │      │
+│      │                                                                  │                                                      │      │
+│      │                                                      ┌───────────▼───────────┐                                           │      │
+│      │                                                      │  VPC Endpoints (AWS)  │ (S3, ECR, Logs, Secrets, SSM, etc.)       │      │
+│      │                                                      └───────────┬───────────┘                                           │      │
+│      │                                                                  │                                                      │      │
+│      │                                                      ┌───────────▼───────────┐                                           │      │
+│      │                                                      │  PrivateLink (Atlas)  │───► MongoDB Atlas (gest.)                 │      │
+│      │                                                      │  (enlace privado TLS) │     - Backups, réplicas, roles            │      │
+│      │                                                      └───────────────────────┘                                           │      │
+│      │                                                                                                                           │      │
+│      └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘      │
+│
+│  Soporte / DevOps
+│  ┌─────────────────────────────┐       ┌─────────────────────────────┐       ┌─────────────────────────────┐       ┌───────────┐
+│  │ ECR (Docker Registry)       │◄──────│ CI/CD (GitHub Actions o     │──────►│   ECS Deploy (blue/green)   │       │   ACM     │
+│  │ - guarda imágenes           │ build │ CodeBuild/CodePipeline)     │  push │   + CodeDeploy/rollback     │       │ (TLS cert)│
+│  └─────────────────────────────┘       └─────────────────────────────┘       └─────────────────────────────┘       └───────────┘
+│
+│  Observabilidad / Seguridad
+│  ┌─────────────────────────────┐   ┌─────────────────────────────┐   ┌─────────────────────────────┐   ┌────────────────────┐
+│  │ CloudWatch (logs/métricas)  │   │ Synthetics (health/WS)      │   │ GuardDuty / CloudTrail /    │   │ WAF (CloudFront/ALB)│
+│  │ Alarmas (CPU/5xx/latencia)  │   │ X-Ray/OpenTelemetry (opc.)  │   │ Config (auditoría/cumpl.)   │   │ Reglas L7/rate/bots │
+│  └─────────────────────────────┘   └─────────────────────────────┘   └─────────────────────────────┘   └────────────────────┘
+
+
+Leyenda rápida:
+- Route 53: DNS.        - CloudFront: CDN para el front (S3 como origen) + WAF + TLS.
+- ALB: balanceador para API/WS en la VPC. Health checks y timeouts largos para WS.
+- ECS Fargate: contenedores sin gestionar servidores (servicios: API e INDEXER).
+- Redis (opcional): adapter socket.io/rate-limits compartidos para escalar horizontal.
+- VPC Endpoints: acceso privado a servicios AWS (evita salir por NAT).
+- NAT Gateways: salida a Internet desde subredes privadas (p.ej. INDEXER → APIs BTC).
+- PrivateLink: conexión privada/TLS desde VPC a MongoDB Atlas.
+- Secrets Manager / SSM: secretos y configuración (no en el código).
+- CloudWatch/GuardDuty/CloudTrail/Config: logs, métricas, seguridad y auditoría.
+- ECR + CI/CD: build/push imágenes y despliegue blue/green a ECS.

@@ -1,6 +1,6 @@
 // tests/multi-users-happy.flow.test.ts
 import { describe, it, expect } from "vitest";
-import { simnet, addr, Cl, cvToUint, unwrapQuote } from "./helpers";
+import { simnet, addr, Cl, cvToUint, unwrapQuote } from "../helpers";
 
 const fmt = (n: number | bigint) =>
   Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { simnet, addr, Cl, cvToUint, unwrapQuote } from "./helpers";
+import { simnet, addr, Cl, cvToUint, unwrapQuote } from "../helpers";
 
 describe("Auto-buy: slippage (u732) + caps por usuario (u731) + spent", () => {
   it("falla por slippage, luego por cap insuficiente; ajusta y compra; spent se actualiza", () => {

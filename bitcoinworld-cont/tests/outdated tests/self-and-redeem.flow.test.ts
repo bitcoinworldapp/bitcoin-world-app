@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { simnet, addr, Cl, cvToUint, unwrapQuote } from "./helpers";
+import { simnet, addr, Cl, cvToUint, unwrapQuote } from "../helpers";
 
 describe("Init + buy + resolve YES + redeem drena el pool", () => {
   it("ingresos al contrato aumentan pool (solo base) y redeem lo deja en 0", () => {
