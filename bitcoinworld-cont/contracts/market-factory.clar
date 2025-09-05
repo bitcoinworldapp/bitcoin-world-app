@@ -12,7 +12,7 @@
 ;; External dependency: .sbtc with (transfer (uint principal principal))
 ;; ------------------------------------------------------------
 
-(define-constant ADMIN 'ST1PSHE32YTEE21FGYEVTA24N681KRGSQM4VF9XZP)
+(define-constant ADMIN 'ST5HMBACVCBHDE0H96M11NCG6TKF7WVWSVSG2P53)
 
 ;; ------------------------- global fee config -------------------------
 (define-data-var protocol-fee-bps uint u0)
