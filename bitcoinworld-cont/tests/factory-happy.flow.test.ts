@@ -1,176 +1,124 @@
+// tests/factory-multi-markets.flow.test.ts
 import { describe, it, expect } from "vitest";
-import { simnet, Cl, addr, unwrapQuote } from "./helpers";
+import { simnet, Cl, addr, cvToUint } from "./helpers";
 
 const toU = (n: number) => Cl.uint(n);
 const toP = (s: string) => Cl.principal(s);
-const fmt = (n: number | bigint) =>
-  Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
 
-describe("Market Factory - happy path", () => {
-  it("creates a market, multiple buys, resolves NO, winners redeem, losers get u105; pool ends 0 and fees routed", () => {
-    // Accounts from Clarinet genesis
-    const d   = addr("deployer");    // ADMIN
-    const w1  = addr("wallet_1");
-    const w2  = addr("wallet_2");
-    const w3  = addr("wallet_3");
-    const w4  = addr("wallet_4");
-    const lp  = addr("wallet_5");
-    const team= addr("wallet_6");
-    const drp = addr("wallet_7");
-    const brc = addr("wallet_8");
-    const contractP = `${d}.market`; // contract principal
+// === IMPORTANT: ADMIN must match the constant inside the contract ===
+const ADMIN = "ST5HMBACVCBHDE0H96M11NCG6TKF7WVWSVSG2P53";
 
-    const M = 0;
+const mint = (to: string, amount: number, signer: string) =>
+  simnet.callPublicFn("sbtc-v2", "mint", [toU(amount), toP(to)], signer);
 
-    // --- Read-only helpers ---
-    const ro = {
-      pool: (m=M) => Number(simnet.callReadOnlyFn("market","get-pool",[toU(m)], d).result.value),
-      b:    (m=M) => Number(simnet.callReadOnlyFn("market","get-b",[toU(m)], d).result.value),
-      yesSupply: (m=M) => Number(simnet.callReadOnlyFn("market","get-yes-supply",[toU(m)], d).result.value),
-      noSupply:  (m=M) => Number(simnet.callReadOnlyFn("market","get-no-supply",[toU(m)], d).result.value),
-      quoteY: (amt: number, m=M) => unwrapQuote(simnet.callReadOnlyFn("market","quote-buy-yes",[toU(m), toU(amt)], d)),
-      quoteN: (amt: number, m=M) => unwrapQuote(simnet.callReadOnlyFn("market","quote-buy-no", [toU(m), toU(amt)], d)),
-    };
+const balSbtc = (who: string) =>
+  cvToUint(simnet.callReadOnlyFn("sbtc-v2", "get-balance", [toP(who)], who).result);
 
-    const bal = (who: string) => {
-      const res = simnet.callReadOnlyFn("sbtc","get-balance",[toP(who)], d).result;
-      const v = res.type === "ok" ? res.value : res;
-      return Number(v.value ?? 0);
-    };
+const getPool = (m: number) =>
+  cvToUint(simnet.callReadOnlyFn("market-factory-v2", "get-pool", [toU(m)], addr("deployer")).result);
 
-    const logBalances = (title: string) => {
-      console.log(`\n== ${title} ==`);
-      console.log(`${d} (ADMIN) sBTC: ${fmt(bal(d))}`);
-      console.log(`${w1} sBTC: ${fmt(bal(w1))}`);
-      console.log(`${w2} sBTC: ${fmt(bal(w2))}`);
-      console.log(`${w3} sBTC: ${fmt(bal(w3))}`);
-      console.log(`${w4} sBTC: ${fmt(bal(w4))}`);
-      console.log(`${lp} (LP) sBTC: ${fmt(bal(lp))}`);
-      console.log(`${drp} (DRIP) sBTC: ${fmt(bal(drp))}`);
-      console.log(`${brc} (BRC) sBTC: ${fmt(bal(brc))}`);
-      console.log(`${team} (TEAM) sBTC: ${fmt(bal(team))}`);
-      console.log(`${contractP} (CONTRACT) sBTC: ${fmt(bal(contractP))}`);
-      console.log(`Pool: ${fmt(ro.pool())}  |  b: ${fmt(ro.b())}`);
-      console.log(`YES supply: ${fmt(ro.yesSupply())}  |  NO supply: ${fmt(ro.noSupply())}`);
-    };
+const getB = (m: number) =>
+  cvToUint(simnet.callReadOnlyFn("market-factory-v2", "get-b", [toU(m)], addr("deployer")).result);
 
-    const expectOk = (r: any, label: string) => {
-      if (r.result.type !== "ok") {
-        console.log(`${label} ERR ->`, JSON.stringify(r.result, null, 2));
-      }
-      expect(r.result.type).toBe("ok");
-    };
+const yesSupply = (m: number) =>
+  cvToUint(simnet.callReadOnlyFn("market-factory-v2", "get-yes-supply", [toU(m)], addr("deployer")).result);
 
-    // --- 0) seed balances (mint sBTC)
-    const mint = (to: string, amt: number) =>
-      simnet.callPublicFn("sbtc","mint",[toU(amt), toP(to)], d);
+const noSupply = (m: number) =>
+  cvToUint(simnet.callReadOnlyFn("market-factory-v2", "get-no-supply", [toU(m)], addr("deployer")).result);
 
-    expectOk(mint(d,  50_000), "mint deployer");
-    expectOk(mint(w1, 1_000_000), "mint w1");
-    expectOk(mint(w2, 1_000_000), "mint w2");
-    expectOk(mint(w3, 1_000_000), "mint w3");
-    expectOk(mint(w4, 1_000_000), "mint w4");
+describe("Market Factory v2 - multi markets in parallel", () => {
+  it("creates two markets, trades on both, resolves differently, winners redeem; pools drain and fees accounted", () => {
+    const d  = addr("deployer"); // contract owner of sbtc-v2 in simnet
+    const w1 = addr("wallet_1");
+    const w2 = addr("wallet_2");
+    const w3 = addr("wallet_3");
+    const w4 = addr("wallet_4");
+    const LP  = addr("wallet_5");
+    const TM  = addr("wallet_6");
+    const DRP = addr("wallet_7");
+    const BRC = addr("wallet_8");
 
-    logBalances("INITIAL STATE");
+    // --- bootstrap balances ---
+    // Mint must be signed by the sbtc-v2 contract owner (deployer),
+    // but the recipient can be cualquier principal (incluido ADMIN).
+    expect(mint(ADMIN, 120_000, d).result.type).toBe("ok"); // ADMIN usará esto en create-market
+    expect(mint(w1, 1_000_000, d).result.type).toBe("ok");
+    expect(mint(w2, 1_000_000, d).result.type).toBe("ok");
+    expect(mint(w3, 1_000_000, d).result.type).toBe("ok");
+    expect(mint(w4, 1_000_000, d).result.type).toBe("ok");
 
-    // --- 1) configure fees and recipients
-    expectOk(simnet.callPublicFn("market","set-fees",[toU(300), toU(100)], d), "set-fees");
-    expectOk(simnet.callPublicFn("market","set-fee-recipients",[toP(drp), toP(brc), toP(team), toP(lp)], d), "set-fee-recipients");
+    // --- fees and recipients (admin-only, firmar como ADMIN) ---
+    expect(simnet.callPublicFn("market-factory-v2","set-fees",[toU(300), toU(100)], ADMIN).result.type).toBe("ok");
+    expect(simnet.callPublicFn(
+      "market-factory-v2","set-fee-recipients",
+      [toP(DRP), toP(BRC), toP(TM), toP(LP)],
+      ADMIN
+    ).result.type).toBe("ok");
 
-    console.log("\n[CONFIG] protocol=3% (split DRIP/BRC/TEAM), LP=1%");
+    const M0 = 0, M1 = 1;
 
-    // --- 2) create market M=0 with initial liquidity 50_000
-    console.log(`\n[CREATE] market ${M} with initial liquidity 50,000 from ADMIN -> CONTRACT`);
-    expect(ro.pool()).toBe(0);
-    const rCreate = simnet.callPublicFn("market","create-market",[toU(M), toU(50_000)], d);
-    expectOk(rCreate, "create-market");
-    logBalances("AFTER CREATE");
+    // --- create markets (admin-only, y los fondos salen de ADMIN) ---
+    expect(simnet.callPublicFn("market-factory-v2","create-market",[toU(M0), toU(50_000)], ADMIN).result.type).toBe("ok");
+    expect(getPool(M0)).toBe(50_000);
+    expect(getB(M0)).toBeGreaterThan(0);
 
-    // --- 3) buys with quotes + detailed deltas ---
-    const buyWithLog = (side: "YES"|"NO", who: string, amt: number, cap: number) => {
-      const q = side === "YES" ? ro.quoteY(amt) : ro.quoteN(amt);
+    expect(simnet.callPublicFn("market-factory-v2","create-market",[toU(M1), toU(30_000)], ADMIN).result.type).toBe("ok");
+    expect(getPool(M1)).toBe(30_000);
+    expect(getB(M1)).toBeGreaterThan(0);
 
-      const before = {
-        user: bal(who),
-        lp: bal(lp),
-        drp: bal(drp),
-        brc: bal(brc),
-        team: bal(team),
-        ct:  bal(contractP),
-        pool: ro.pool(),
-        yS: ro.yesSupply(),
-        nS: ro.noSupply(),
-      };
+    // --- trades on M0 (note: 4 args m, amount, target-cap, max-cost) ---
+    expect(
+      simnet.callPublicFn("market-factory-v2","buy-yes-auto",[toU(M0), toU(100), toU(1_000_000), toU(50_000)], w1).result.type
+    ).toBe("ok");
+    expect(
+      simnet.callPublicFn("market-factory-v2","buy-no-auto", [toU(M0), toU(200), toU(1_000_000), toU(50_000)], w2).result.type
+    ).toBe("ok");
 
-      console.log(`\n[BUY ${side}] x${fmt(amt)} @${who}  -> base=${fmt(q.cost)}, feeP=${fmt(q.feeProtocol)} (drip=${fmt(q.drip)}, brc=${fmt(q.brc20)}, team=${fmt(q.team)}), feeLP=${fmt(q.feeLP)}, total=${fmt(q.total)}`);
+    // --- trades on M1 ---
+    expect(
+      simnet.callPublicFn("market-factory-v2","buy-no-auto", [toU(M1), toU(150), toU(1_000_000), toU(50_000)], w3).result.type
+    ).toBe("ok");
+    expect(
+      simnet.callPublicFn("market-factory-v2","buy-yes-auto",[toU(M1), toU(120), toU(1_000_000), toU(50_000)], w4).result.type
+    ).toBe("ok");
 
-      const call = side === "YES"
-        ? simnet.callPublicFn("market","buy-yes-auto",[toU(M), toU(amt), toU(cap), toU(q.total)], who)
-        : simnet.callPublicFn("market","buy-no-auto", [toU(M), toU(amt), toU(cap), toU(q.total)], who);
+    // --- resolve (admin-only) ---
+    expect(simnet.callPublicFn("market-factory-v2","resolve",[toU(M0), Cl.stringAscii("NO")], ADMIN).result.type).toBe("ok");
+    expect(simnet.callPublicFn("market-factory-v2","resolve",[toU(M1), Cl.stringAscii("YES")], ADMIN).result.type).toBe("ok");
 
-      expectOk(call, `buy-${side.toLowerCase()}-auto`);
+    // pools must be >0 prior to redeem
+    expect(getPool(M0)).toBeGreaterThan(0);
+    expect(getPool(M1)).toBeGreaterThan(0);
 
-      const after = {
-        user: bal(who),
-        lp: bal(lp),
-        drp: bal(drp),
-        brc: bal(brc),
-        team: bal(team),
-        ct:  bal(contractP),
-        pool: ro.pool(),
-        yS: ro.yesSupply(),
-        nS: ro.noSupply(),
-      };
+    // winners redeem
+    const w2Before = balSbtc(w2);
+    expect(simnet.callPublicFn("market-factory-v2","redeem",[toU(M0)], w2).result.type).toBe("ok");
+    const w2After = balSbtc(w2);
+    expect(w2After).toBeGreaterThan(w2Before);
 
-      console.log(`[DELTA] user: ${fmt(after.user - before.user)}  |  contract: ${fmt(after.ct - before.ct)}  |  pool: ${fmt(after.pool - before.pool)}`);
-      console.log(`[FEES]  lp: +${fmt(after.lp - before.lp)}  |  drip: +${fmt(after.drp - before.drp)}  |  brc: +${fmt(after.brc - before.brc)}  |  team: +${fmt(after.team - before.team)}`);
-      console.log(`[SUPPLY] YES: ${fmt(before.yS)} -> ${fmt(after.yS)}  |  NO: ${fmt(before.nS)} -> ${fmt(after.nS)}`);
-    };
+    const w4Before = balSbtc(w4);
+    expect(simnet.callPublicFn("market-factory-v2","redeem",[toU(M1)], w4).result.type).toBe("ok");
+    const w4After = balSbtc(w4);
+    expect(w4After).toBeGreaterThan(w4Before);
 
-    // large caps so we do not hit u731 in happy path
-    buyWithLog("YES", w1, 100, 10_000_000);
-    buyWithLog("NO",  w2, 200, 10_000_000);
-    buyWithLog("NO",  w3, 150, 10_000_000);
-    buyWithLog("YES", w4, 120, 10_000_000);
-    buyWithLog("NO",  w2,  80, 10_000_000);
+    // drain rest
+    simnet.callPublicFn("market-factory-v2","redeem",[toU(M1)], w3);
+    simnet.callPublicFn("market-factory-v2","redeem",[toU(M0)], w1);
 
-    logBalances("AFTER BUYS");
+    expect(getPool(M0)).toBe(0);
+    expect(getPool(M1)).toBe(0);
 
-    // --- 4) resolve to NO ---
-    console.log("\n[RESOLVE] market 0 -> NO");
-    const rRes = simnet.callPublicFn("market","resolve",[toU(M), Cl.stringAscii("NO")], d);
-    expectOk(rRes, "resolve");
-    console.log(`[RESOLVE STATE] pool: ${fmt(ro.pool())}  |  YES supply: ${fmt(ro.yesSupply())}  |  NO supply: ${fmt(ro.noSupply())}`);
+    // supplies and fees sanity
+    const ys0 = yesSupply(M0), ns0 = noSupply(M0);
+    const ys1 = yesSupply(M1), ns1 = noSupply(M1);
+    expect(ns0).toBe(0);
+    expect(ys0).toBeGreaterThan(0);
+    expect(ys1).toBe(0);
+    expect(ns1).toBeGreaterThan(0);
 
-    // --- 5) winners redeem (w2, w3), losers (w1, w4) get u105 ---
-    const redeem = (who: string, label: string) => {
-      const before = bal(who);
-      const r = simnet.callPublicFn("market","redeem",[toU(M)], who);
-      if (r.result.type === "ok") {
-        const payout = Number(r.result.value.value);
-        const after = bal(who);
-        console.log(`[REDEEM OK] ${label} @${who} -> payout=${fmt(payout)} | balance: ${fmt(before)} -> ${fmt(after)} | pool now: ${fmt(ro.pool())}`);
-      } else {
-        const code = Number(r.result.value.value);
-        console.log(`[REDEEM ERR] ${label} @${who} -> err u${code} | pool: ${fmt(ro.pool())}`);
-      }
-      return r;
-    };
-
-    const rW2 = redeem(w2, "winner NO (wallet_2)");
-    const rW3 = redeem(w3, "winner NO (wallet_3)");
-    expect(rW2.result.type).toBe("ok");
-    expect(rW3.result.type).toBe("ok");
-
-    const rL1 = redeem(w1, "loser YES (wallet_1)");
-    const rL4 = redeem(w4, "loser YES (wallet_4)");
-    expect(rL1.result).toEqual({ type:"err", value:{ type:"uint", value: 105n } });
-    expect(rL4.result).toEqual({ type:"err", value:{ type:"uint", value: 105n } });
-
-    // --- 6) final state ---
-    logBalances("FINAL STATE");
-
-    // Final assertions
-    expect(ro.pool()).toBe(0);
+    const lpBal = balSbtc(LP), drpBal = balSbtc(DRP), tmBal = balSbtc(TM);
+    expect(lpBal).toBeGreaterThan(0);
+    expect(drpBal).toBeGreaterThan(0);
+    expect(tmBal).toBeGreaterThan(0);
   });
 });

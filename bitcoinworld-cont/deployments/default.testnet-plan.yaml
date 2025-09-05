@@ -9,24 +9,10 @@ plan:
     - id: 0
       transactions:
         - contract-publish:
-            contract-name: sip010-ft
+            contract-name: market-factory-v2
             expected-sender: ST1PSHE32YTEE21FGYEVTA24N681KRGSQM4VF9XZP
-            cost: 5920
-            path: "contracts\\sip010-ft.clar"
+            cost: 249360
+            path: "contracts\\market-factory-v2.clar"
             anchor-block-only: true
-            clarity-version: 1
-        - contract-publish:
-            contract-name: sbtc
-            expected-sender: ST1PSHE32YTEE21FGYEVTA24N681KRGSQM4VF9XZP
-            cost: 18160
-            path: "contracts\\sbtc.clar"
-            anchor-block-only: true
-            clarity-version: 1
-        - contract-publish:
-            contract-name: market
-            expected-sender: ST1PSHE32YTEE21FGYEVTA24N681KRGSQM4VF9XZP
-            cost: 97000
-            path: "contracts\\market.clar"
-            anchor-block-only: true
-            clarity-version: 1
-      epoch: "2.05"
+            clarity-version: 2
+      epoch: "2.1"

@@ -19,15 +19,15 @@ clarity_version = 2
 epoch = "2.1"
 
 # Our sbtc implementation
-[contracts.sbtc]
-path       = "contracts/sbtc.clar"
+[contracts.sbtc-v2]
+path       = "contracts/sbtc-v2.clar"
 depends_on = ["sip010-ft"]
 clarity_version = 2
 epoch = "2.1"
 
 # Market that calls into sbtc
-[contracts.market]
-path       = "contracts/market-factory.clar"
+[contracts.market-factory-v2]
+path       = "contracts/market-factory-v2.clar"
 depends_on = ["sbtc"]
 clarity_version = 2
 epoch = "2.1"

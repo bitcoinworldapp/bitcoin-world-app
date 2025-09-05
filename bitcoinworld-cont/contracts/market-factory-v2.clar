@@ -9,7 +9,7 @@
 ;; - Resolve, redeem with last-sweep, withdraw-surplus
 ;; - Name-agnostic: captures SELF principal once
 ;;
-;; External dependency: .sbtc with (transfer (uint principal principal))
+;; External dependency: .sbtc-v2 with (transfer (uint principal principal))
 ;; ------------------------------------------------------------
 
 (define-constant ADMIN 'ST5HMBACVCBHDE0H96M11NCG6TKF7WVWSVSG2P53)
@@ -351,7 +351,7 @@
     (as-contract (var-set SELF tx-sender))
 
     ;; ADMIN -> CONTRACT (recipient = SELF)
-    (try! (contract-call? .sbtc transfer initial-liquidity tx-sender (var-get SELF)))
+    (try! (contract-call? .sbtc-v2 transfer initial-liquidity tx-sender (var-get SELF)))
 
     (map-set m-status      { m: m } { s: "open" })
     (map-set m-outcome     { m: m } { o: "" })
@@ -374,7 +374,7 @@
     (asserts! (is-eq (get-initialized-bool m) true) ERR-NOT-INIT)
     (asserts! (> amount u0) (err u702))
     ;; ADMIN -> CONTRACT
-    (try! (contract-call? .sbtc transfer amount tx-sender (var-get SELF)))
+    (try! (contract-call? .sbtc-v2 transfer amount tx-sender (var-get SELF)))
     (let ((p (+ (get-pool-or0 m) amount)))
       (map-set m-pool { m: m } { p: p })
       (recompute-b m)
@@ -416,14 +416,14 @@
           (asserts! (<= (+ spent total) cap) (err u731))
 
           ;; USER -> CONTRACT
-          (try! (contract-call? .sbtc transfer base tx-sender (var-get SELF)))
+          (try! (contract-call? .sbtc-v2 transfer base tx-sender (var-get SELF)))
 
           ;; protocol fees: USER -> recipients
           (if (> feeP u0)
             (begin
-              (if (> drip u0) (try! (contract-call? .sbtc transfer drip tx-sender (var-get DRIP_VAULT))) true)
-              (if (> brc  u0) (try! (contract-call? .sbtc transfer brc  tx-sender (var-get BRC20_VAULT))) true)
-              (if (> team u0) (try! (contract-call? .sbtc transfer team tx-sender (var-get TEAM_WALLET))) true)
+              (if (> drip u0) (try! (contract-call? .sbtc-v2 transfer drip tx-sender (var-get DRIP_VAULT))) true)
+              (if (> brc  u0) (try! (contract-call? .sbtc-v2 transfer brc  tx-sender (var-get BRC20_VAULT))) true)
+              (if (> team u0) (try! (contract-call? .sbtc-v2 transfer team tx-sender (var-get TEAM_WALLET))) true)
               true
             )
             true
@@ -431,7 +431,7 @@
 
           ;; LP fee: USER -> LP wallet
           (if (> feeL u0)
-            (try! (contract-call? .sbtc transfer feeL tx-sender (var-get LP_WALLET)))
+            (try! (contract-call? .sbtc-v2 transfer feeL tx-sender (var-get LP_WALLET)))
             true
           )
 
@@ -506,14 +506,14 @@
           (asserts! (<= (+ spent total) cap) (err u731))
 
           ;; USER -> CONTRACT
-          (try! (contract-call? .sbtc transfer base tx-sender (var-get SELF)))
+          (try! (contract-call? .sbtc-v2 transfer base tx-sender (var-get SELF)))
 
           ;; protocol fees
           (if (> feeP u0)
             (begin
-              (if (> drip u0) (try! (contract-call? .sbtc transfer drip tx-sender (var-get DRIP_VAULT))) true)
-              (if (> brc  u0) (try! (contract-call? .sbtc transfer brc  tx-sender (var-get BRC20_VAULT))) true)
-              (if (> team u0) (try! (contract-call? .sbtc transfer team tx-sender (var-get TEAM_WALLET))) true)
+              (if (> drip u0) (try! (contract-call? .sbtc-v2 transfer drip tx-sender (var-get DRIP_VAULT))) true)
+              (if (> brc  u0) (try! (contract-call? .sbtc-v2 transfer brc  tx-sender (var-get BRC20_VAULT))) true)
+              (if (> team u0) (try! (contract-call? .sbtc-v2 transfer team tx-sender (var-get TEAM_WALLET))) true)
               true
             )
             true
@@ -521,7 +521,7 @@
 
           ;; LP fee
           (if (> feeL u0)
-            (try! (contract-call? .sbtc transfer feeL tx-sender (var-get LP_WALLET)))
+            (try! (contract-call? .sbtc-v2 transfer feeL tx-sender (var-get LP_WALLET)))
             true
           )
 
@@ -578,14 +578,14 @@
           (asserts! (<= (+ spent total) cap) (err u731))
 
           ;; USER -> CONTRACT
-          (try! (contract-call? .sbtc transfer base tx-sender (var-get SELF)))
+          (try! (contract-call? .sbtc-v2 transfer base tx-sender (var-get SELF)))
 
           ;; protocol fees
           (if (> feeP u0)
             (begin
-              (if (> drip u0) (try! (contract-call? .sbtc transfer drip tx-sender (var-get DRIP_VAULT))) true)
-              (if (> brc  u0) (try! (contract-call? .sbtc transfer brc  tx-sender (var-get BRC20_VAULT))) true)
-              (if (> team u0) (try! (contract-call? .sbtc transfer team tx-sender (var-get TEAM_WALLET))) true)
+              (if (> drip u0) (try! (contract-call? .sbtc-v2 transfer drip tx-sender (var-get DRIP_VAULT))) true)
+              (if (> brc  u0) (try! (contract-call? .sbtc-v2 transfer brc  tx-sender (var-get BRC20_VAULT))) true)
+              (if (> team u0) (try! (contract-call? .sbtc-v2 transfer team tx-sender (var-get TEAM_WALLET))) true)
               true
             )
             true
@@ -593,7 +593,7 @@
 
           ;; LP fee
           (if (> feeL u0)
-            (try! (contract-call? .sbtc transfer feeL tx-sender (var-get LP_WALLET)))
+            (try! (contract-call? .sbtc-v2 transfer feeL tx-sender (var-get LP_WALLET)))
             true
           )
 
@@ -629,7 +629,7 @@
 (define-public (redeem (m uint))
   (begin
     (asserts! (is-eq (get-status-str m) "resolved") (err u104))
-    (let ((out (default-to "" (get o (map-get? m-outcome { m: m })))))
+    (let ((out (default-to "" (get o (map-get? m-outcome { m: m })))) )
       (if (is-eq out "YES") (redeem-yes m) (redeem-no m))
     )
   )
@@ -650,7 +650,7 @@
     )
       (asserts! (> payout u0) (err u2))
       (try! (burn-yes-all m tx-sender))
-      (as-contract (try! (contract-call? .sbtc transfer payout tx-sender rcpt)))
+      (as-contract (try! (contract-call? .sbtc-v2 transfer payout tx-sender rcpt)))
       (map-set m-pool { m: m } { p: (- p payout) })
       (recompute-b m)
       (ok payout)
@@ -673,7 +673,7 @@
     )
       (asserts! (> payout u0) (err u2))
       (try! (burn-no-all m tx-sender))
-      (as-contract (try! (contract-call? .sbtc transfer payout tx-sender rcpt)))
+      (as-contract (try! (contract-call? .sbtc-v2 transfer payout tx-sender rcpt)))
       (map-set m-pool { m: m } { p: (- p payout) })
       (recompute-b m)
       (ok payout)
@@ -696,7 +696,7 @@
           (asserts! (is-eq ys u0) (err u708))
           (asserts! (is-eq ns u0) (err u709)))
       (asserts! (> p u0) (err u710))
-      (as-contract (try! (contract-call? .sbtc transfer p tx-sender ADMIN)))
+      (as-contract (try! (contract-call? .sbtc-v2 transfer p tx-sender ADMIN)))
       (map-set m-pool { m: m } { p: u0 })
       (recompute-b m)
       (ok true)
