@@ -1,15 +1,10 @@
 ;; ------------------------------------------------------------
-;; market-factory.clar
-;; Multi-market YES/NO LMSR factory.
-;; - Per-market state (pool, b, q-yes, q-no, status, outcome, paused, max-trade)
-;; - Per-market user caps and spent
-;; - YES/NO balances and supply tracked in maps (no dynamic FTs)
-;; - Auto-buy with max-cost (slippage guard)
-;; - Fee routing and lock
-;; - Resolve, redeem with last-sweep, withdraw-surplus
-;; - Name-agnostic: captures SELF principal once
-;;
-;; External dependency: .sbtc-v2 with (transfer (uint principal principal))
+;; market-factory-v3 (Fixed-b LMSR + fixed-per-share redemption)
+;; - True LMSR pricing with fixed b per market (never recomputed).
+;; - Numerically stable log-sum-exp centering in cost function.
+;; - Redemption is fixed-per-share: payout = shares * UNIT.
+;; - Pool invariant (informational): pool = seed + SUM(DeltaC) - SUM(payouts).
+;; - External dependency: .sbtc-v3::transfer(uint principal principal)
 ;; ------------------------------------------------------------
 
 (define-constant ADMIN 'ST5HMBACVCBHDE0H96M11NCG6TKF7WVWSVSG2P53)
@@ -35,8 +30,8 @@
 (define-data-var SELF principal ADMIN)
 
 ;; --------------------------- per-market state ------------------------
-(define-map m-status      { m: uint } { s: (string-ascii 10) })
-(define-map m-outcome     { m: uint } { o: (string-ascii 3) })
+(define-map m-status      { m: uint } { s: (string-ascii 10) })  ;; "open" | "resolved"
+(define-map m-outcome     { m: uint } { o: (string-ascii 3) })   ;; "" | "YES" | "NO"
 (define-map m-initialized { m: uint } { v: bool })
 (define-map m-paused      { m: uint } { v: bool })
 (define-map m-max-trade   { m: uint } { v: uint })
@@ -65,14 +60,18 @@
 (define-constant ERR-B-ZERO      (err u703))
 (define-constant ERR-AMOUNT      (err u704))
 (define-constant ERR-SLIPPAGE    (err u732))
+(define-constant ERR-INSOLVENT-RESOLVE (err u712))
 
 ;; -------------------------- math constants --------------------------
-(define-constant SCALE u1000000)
+(define-constant SCALE u1000000)                  ;; 6-decimal fixed point
 (define-constant SCALE-INT (to-int SCALE))
-(define-constant LN2-SCALED (to-int u693147)) ;; approx ln(2) * 1e6
+(define-constant LN2-SCALED (to-int u693147))     ;; approx ln(2) * 1e6
 (define-constant i2 (to-int u2))
 (define-constant i3 (to-int u3))
 (define-constant i6 (to-int u6))
+
+;; Redemption UNIT: on-chain units (6dp). Example: UNIT=100 => 0.000100 sBTC per share.
+(define-constant UNIT u100)
 
 ;; ---------------------------- utilities -----------------------------
 (define-private (only-admin)
@@ -140,15 +139,19 @@
   )
 )
 
+;; LMSR cost with recentering: ln(exp(a)+exp(b)) = ln(2) + ln((exp(a)+exp(b))/2)
 (define-private (cost-fn (b uint) (qY uint) (qN uint))
-  (let ((B-INT (to-int b))
+  (let (
+        (B-INT (to-int b))
         (bpos  (> b u0))
         (qYsc  (if bpos (/ (* (to-int qY) SCALE-INT) B-INT) 0))
         (qNsc  (if bpos (/ (* (to-int qN) SCALE-INT) B-INT) 0))
         (t1    (exp-fixed qYsc))
         (t2    (exp-fixed qNsc))
         (sum   (+ t1 t2))
-        (lnsum (ln-fixed sum)))
+        (half  (/ sum i2))
+        (lnsum (+ LN2-SCALED (ln-fixed half)))
+       )
     (if bpos (/ (* B-INT lnsum) SCALE-INT) 0)
   )
 )
@@ -165,19 +168,21 @@
   )
 )
 
-;; recompute-b returns plain bool
-(define-private (recompute-b (m uint))
-  (let ((p (get-pool-or0 m)))
-    (if (> p u0)
-        (let ((num (* (to-int p) SCALE-INT))
-              (den LN2-SCALED))
-          (map-set m-b { m: m } { b: (to-uint (/ num den)) })
-        )
-        (map-set m-b { m: m } { b: u0 })
+;; ---------------------- fixed b: init once --------------------------
+(define-private (init-b (m uint) (initial-liq uint))
+  (begin
+    (let (
+      (num (* (to-int initial-liq) SCALE-INT))
+      (den LN2-SCALED)
+    )
+      (map-set m-b { m: m } { b: (to-uint (/ num den)) })
     )
     true
   )
 )
+
+;; kept for compatibility; no-op
+(define-private (recompute-b (m uint)) true)
 
 ;; ------------------------ caps and spent helpers --------------------
 (define-read-only (get-cap (m uint) (who principal))
@@ -189,7 +194,7 @@
 )
 
 (define-private (bump-cap-if-needed (m uint) (who principal) (target-cap uint))
-  (let ((cur (default-to u0 (get cap (map-get? user-caps { m: m, user: who })))))
+  (let ((cur (default-to u0 (get cap (map-get? user-caps { m: m, user: who })))) )
     (if (> target-cap cur)
         (begin (map-set user-caps { m: m, user: who } { cap: target-cap }) true)
         true)
@@ -197,7 +202,7 @@
 )
 
 (define-private (add-spent (m uint) (who principal) (delta uint))
-  (let ((cur (default-to u0 (get spent (map-get? user-spent { m: m, user: who }))))
+  (let ((cur (default-to u0 (get spent (map-get? user-spent { m: m, user: who })) ))
         (nw  (+ cur delta)))
     (begin (map-set user-spent { m: m, user: who } { spent: nw }) true)
   )
@@ -236,11 +241,10 @@
   (default-to u0 (get s (map-get? no-supply { m: m })))
 )
 
-;; mint helpers now return plain bool (no response), so no try! needed
 (define-private (mint-yes (m uint) (to principal) (amt uint))
   (let (
-    (cur (default-to u0 (get bal (map-get? yes-holdings { m: m, user: to }))))
-    (sup (default-to u0 (get s   (map-get? yes-supply   { m: m }))))
+    (cur (default-to u0 (get bal (map-get? yes-holdings { m: m, user: to })) ))
+    (sup (default-to u0 (get s   (map-get? yes-supply   { m: m })) ))
   )
     (map-set yes-holdings { m: m, user: to } { bal: (+ cur amt) })
     (map-set yes-supply   { m: m }            { s:   (+ sup amt) })
@@ -250,8 +254,8 @@
 
 (define-private (mint-no (m uint) (to principal) (amt uint))
   (let (
-    (cur (default-to u0 (get bal (map-get? no-holdings { m: m, user: to }))))
-    (sup (default-to u0 (get s   (map-get? no-supply   { m: m }))))
+    (cur (default-to u0 (get bal (map-get? no-holdings { m: m, user: to })) ))
+    (sup (default-to u0 (get s   (map-get? no-supply   { m: m })) ))
   )
     (map-set no-holdings { m: m, user: to } { bal: (+ cur amt) })
     (map-set no-supply   { m: m }            { s:   (+ sup amt) })
@@ -261,8 +265,8 @@
 
 (define-private (burn-yes-all (m uint) (from principal))
   (let (
-    (bal (default-to u0 (get bal (map-get? yes-holdings { m: m, user: from }))))
-    (sup (default-to u0 (get s   (map-get? yes-supply   { m: m }))))
+    (bal (default-to u0 (get bal (map-get? yes-holdings { m: m, user: from })) ))
+    (sup (default-to u0 (get s   (map-get? yes-supply   { m: m })) ))
   )
     (begin
       (asserts! (> bal u0) (err u105))
@@ -275,8 +279,8 @@
 
 (define-private (burn-no-all (m uint) (from principal))
   (let (
-    (bal (default-to u0 (get bal (map-get? no-holdings { m: m, user: from }))))
-    (sup (default-to u0 (get s   (map-get? no-supply   { m: m }))))
+    (bal (default-to u0 (get bal (map-get? no-holdings { m: m, user: from })) ))
+    (sup (default-to u0 (get s   (map-get? no-supply   { m: m })) ))
   )
     (begin
       (asserts! (> bal u0) (err u105))
@@ -347,12 +351,12 @@
     (asserts! (is-eq (get-initialized-bool m) false) (err u700))
     (asserts! (> initial-liquidity u0) (err u701))
 
-    ;; capture SELF once (as-contract -> tx-sender is contract principal)
     (as-contract (var-set SELF tx-sender))
 
-    ;; ADMIN -> CONTRACT (recipient = SELF)
-    (try! (contract-call? .sbtc-v2 transfer initial-liquidity tx-sender (var-get SELF)))
+    ;; ADMIN -> CONTRACT
+    (try! (contract-call? .sbtc-v3 transfer initial-liquidity tx-sender (var-get SELF)))
 
+    ;; set state
     (map-set m-status      { m: m } { s: "open" })
     (map-set m-outcome     { m: m } { o: "" })
     (map-set m-initialized { m: m } { v: true })
@@ -363,7 +367,10 @@
     (map-set m-pool        { m: m } { p: initial-liquidity })
     (map-set yes-supply    { m: m } { s: u0 })
     (map-set no-supply     { m: m } { s: u0 })
-    (recompute-b m)
+
+    ;; fixed b (derived from seed); never changed later
+    (init-b m initial-liquidity)
+
     (ok (get-b-or0 m))
   )
 )
@@ -373,11 +380,13 @@
     (try! (only-admin))
     (asserts! (is-eq (get-initialized-bool m) true) ERR-NOT-INIT)
     (asserts! (> amount u0) (err u702))
+    ;; disabled when resolved, but allowed while paused
+    (asserts! (is-eq (get-status-str m) "open") ERR-NOT-OPEN)
+
     ;; ADMIN -> CONTRACT
-    (try! (contract-call? .sbtc-v2 transfer amount tx-sender (var-get SELF)))
+    (try! (contract-call? .sbtc-v3 transfer amount tx-sender (var-get SELF)))
     (let ((p (+ (get-pool-or0 m) amount)))
       (map-set m-pool { m: m } { p: p })
-      (recompute-b m)
       (ok (get-b-or0 m))
     )
   )
@@ -409,33 +418,33 @@
         (total (+ base (+ feeP feeL)))
       )
         (let (
-          (cap   (default-to u0 (get cap (map-get? user-caps { m: m, user: tx-sender }))))
-          (spent (default-to u0 (get spent (map-get? user-spent { m: m, user: tx-sender }))))
+          (cap   (default-to u0 (get cap (map-get? user-caps { m: m, user: tx-sender })) ))
+          (spent (default-to u0 (get spent (map-get? user-spent { m: m, user: tx-sender })) ))
         )
           (asserts! (> cap u0) (err u730))
           (asserts! (<= (+ spent total) cap) (err u731))
 
-          ;; USER -> CONTRACT
-          (try! (contract-call? .sbtc-v2 transfer base tx-sender (var-get SELF)))
+          ;; USER -> CONTRACT (base only)
+          (try! (contract-call? .sbtc-v3 transfer base tx-sender (var-get SELF)))
 
           ;; protocol fees: USER -> recipients
           (if (> feeP u0)
             (begin
-              (if (> drip u0) (try! (contract-call? .sbtc-v2 transfer drip tx-sender (var-get DRIP_VAULT))) true)
-              (if (> brc  u0) (try! (contract-call? .sbtc-v2 transfer brc  tx-sender (var-get BRC20_VAULT))) true)
-              (if (> team u0) (try! (contract-call? .sbtc-v2 transfer team tx-sender (var-get TEAM_WALLET))) true)
+              (if (> drip u0) (try! (contract-call? .sbtc-v3 transfer drip tx-sender (var-get DRIP_VAULT))) true)
+              (if (> brc  u0) (try! (contract-call? .sbtc-v3 transfer brc  tx-sender (var-get BRC20_VAULT))) true)
+              (if (> team u0) (try! (contract-call? .sbtc-v3 transfer team tx-sender (var-get TEAM_WALLET))) true)
               true
             )
             true
           )
 
-          ;; LP fee: USER -> LP wallet
+          ;; LP fee
           (if (> feeL u0)
-            (try! (contract-call? .sbtc-v2 transfer feeL tx-sender (var-get LP_WALLET)))
+            (try! (contract-call? .sbtc-v3 transfer feeL tx-sender (var-get LP_WALLET)))
             true
           )
 
-          ;; mint side tokens in ledgers
+          ;; mint
           (if yes?
             (begin
               (mint-yes m tx-sender amount)
@@ -447,11 +456,8 @@
             )
           )
 
-          ;; update pool and b
-          (let ((np (+ (get-pool-or0 m) base)))
-            (map-set m-pool { m: m } { p: np })
-            (recompute-b m)
-          )
+          ;; update pool (base enters the pool)
+          (map-set m-pool { m: m } { p: (+ (get-pool-or0 m) base) })
 
           ;; track spent
           (add-spent m tx-sender total)
@@ -499,21 +505,21 @@
         (asserts! (<= total max-cost) ERR-SLIPPAGE)
 
         (let (
-          (cap   (default-to u0 (get cap (map-get? user-caps { m: m, user: tx-sender }))))
-          (spent (default-to u0 (get spent (map-get? user-spent { m: m, user: tx-sender }))))
+          (cap   (default-to u0 (get cap (map-get? user-caps { m: m, user: tx-sender })) ))
+          (spent (default-to u0 (get spent (map-get? user-spent { m: m, user: tx-sender })) ))
         )
           (asserts! (> cap u0) (err u730))
           (asserts! (<= (+ spent total) cap) (err u731))
 
           ;; USER -> CONTRACT
-          (try! (contract-call? .sbtc-v2 transfer base tx-sender (var-get SELF)))
+          (try! (contract-call? .sbtc-v3 transfer base tx-sender (var-get SELF)))
 
           ;; protocol fees
           (if (> feeP u0)
             (begin
-              (if (> drip u0) (try! (contract-call? .sbtc-v2 transfer drip tx-sender (var-get DRIP_VAULT))) true)
-              (if (> brc  u0) (try! (contract-call? .sbtc-v2 transfer brc  tx-sender (var-get BRC20_VAULT))) true)
-              (if (> team u0) (try! (contract-call? .sbtc-v2 transfer team tx-sender (var-get TEAM_WALLET))) true)
+              (if (> drip u0) (try! (contract-call? .sbtc-v3 transfer drip tx-sender (var-get DRIP_VAULT))) true)
+              (if (> brc  u0) (try! (contract-call? .sbtc-v3 transfer brc  tx-sender (var-get BRC20_VAULT))) true)
+              (if (> team u0) (try! (contract-call? .sbtc-v3 transfer team tx-sender (var-get TEAM_WALLET))) true)
               true
             )
             true
@@ -521,7 +527,7 @@
 
           ;; LP fee
           (if (> feeL u0)
-            (try! (contract-call? .sbtc-v2 transfer feeL tx-sender (var-get LP_WALLET)))
+            (try! (contract-call? .sbtc-v3 transfer feeL tx-sender (var-get LP_WALLET)))
             true
           )
 
@@ -529,9 +535,8 @@
           (mint-yes m tx-sender amount)
           (map-set m-q-yes { m: m } { q: (+ (get-qy-or0 m) amount) })
 
-          ;; update pool and b
+          ;; update pool
           (map-set m-pool { m: m } { p: (+ (get-pool-or0 m) base) })
-          (recompute-b m)
 
           ;; track spent
           (add-spent m tx-sender total)
@@ -571,21 +576,21 @@
         (asserts! (<= total max-cost) ERR-SLIPPAGE)
 
         (let (
-          (cap   (default-to u0 (get cap (map-get? user-caps { m: m, user: tx-sender }))))
-          (spent (default-to u0 (get spent (map-get? user-spent { m: m, user: tx-sender }))))
+          (cap   (default-to u0 (get cap (map-get? user-caps { m: m, user: tx-sender })) ))
+          (spent (default-to u0 (get spent (map-get? user-spent { m: m, user: tx-sender })) ))
         )
           (asserts! (> cap u0) (err u730))
           (asserts! (<= (+ spent total) cap) (err u731))
 
           ;; USER -> CONTRACT
-          (try! (contract-call? .sbtc-v2 transfer base tx-sender (var-get SELF)))
+          (try! (contract-call? .sbtc-v3 transfer base tx-sender (var-get SELF)))
 
           ;; protocol fees
           (if (> feeP u0)
             (begin
-              (if (> drip u0) (try! (contract-call? .sbtc-v2 transfer drip tx-sender (var-get DRIP_VAULT))) true)
-              (if (> brc  u0) (try! (contract-call? .sbtc-v2 transfer brc  tx-sender (var-get BRC20_VAULT))) true)
-              (if (> team u0) (try! (contract-call? .sbtc-v2 transfer team tx-sender (var-get TEAM_WALLET))) true)
+              (if (> drip u0) (try! (contract-call? .sbtc-v3 transfer drip tx-sender (var-get DRIP_VAULT))) true)
+              (if (> brc  u0) (try! (contract-call? .sbtc-v3 transfer brc  tx-sender (var-get BRC20_VAULT))) true)
+              (if (> team u0) (try! (contract-call? .sbtc-v3 transfer team tx-sender (var-get TEAM_WALLET))) true)
               true
             )
             true
@@ -593,7 +598,7 @@
 
           ;; LP fee
           (if (> feeL u0)
-            (try! (contract-call? .sbtc-v2 transfer feeL tx-sender (var-get LP_WALLET)))
+            (try! (contract-call? .sbtc-v3 transfer feeL tx-sender (var-get LP_WALLET)))
             true
           )
 
@@ -601,9 +606,8 @@
           (mint-no m tx-sender amount)
           (map-set m-q-no { m: m } { q: (+ (get-qn-or0 m) amount) })
 
-          ;; update pool and b
+          ;; update pool
           (map-set m-pool { m: m } { p: (+ (get-pool-or0 m) base) })
-          (recompute-b m)
 
           ;; track spent
           (add-spent m tx-sender total)
@@ -620,12 +624,23 @@
     (try! (only-admin))
     (asserts! (is-eq (get-status-str m) "open") (err u102))
     (asserts! (or (is-eq result "YES") (is-eq result "NO")) (err u103))
-    (map-set m-outcome { m: m } { o: result })
-    (map-set m-status  { m: m } { s: "resolved" })
-    (ok true)
+
+    ;; On-chain solvency check: pool >= totalWinningShares * UNIT
+    (let (
+      (ys (default-to u0 (get s (map-get? yes-supply { m: m })) ))
+      (ns (default-to u0 (get s (map-get? no-supply  { m: m })) ))
+      (p  (get-pool-or0 m))
+      (req (if (is-eq result "YES") (* ys UNIT) (* ns UNIT)))
+    )
+      (asserts! (>= p req) ERR-INSOLVENT-RESOLVE)
+      (map-set m-outcome { m: m } { o: result })
+      (map-set m-status  { m: m } { s: "resolved" })
+      (ok true)
+    )
   )
 )
 
+;; REDEEM fixed-per-share (UNIT per share)
 (define-public (redeem (m uint))
   (begin
     (asserts! (is-eq (get-status-str m) "resolved") (err u104))
@@ -637,57 +652,43 @@
 
 (define-private (redeem-yes (m uint))
   (let (
-    (balance (default-to u0 (get bal (map-get? yes-holdings { m: m, user: tx-sender }))))
-    (supply  (default-to u0 (get s   (map-get? yes-supply   { m: m }))))
+    (balance (default-to u0 (get bal (map-get? yes-holdings { m: m, user: tx-sender })) ))
+    (payout  (* balance UNIT))
     (p       (get-pool-or0 m))
     (rcpt    tx-sender)
   )
-    (asserts! (> supply u0) (err u105))
-    (let (
-      (is-last (is-eq balance supply))
-      (raw     (/ (* balance p) supply))
-      (payout  (if is-last p raw))
-    )
-      (asserts! (> payout u0) (err u2))
-      (try! (burn-yes-all m tx-sender))
-      (as-contract (try! (contract-call? .sbtc-v2 transfer payout tx-sender rcpt)))
-      (map-set m-pool { m: m } { p: (- p payout) })
-      (recompute-b m)
-      (ok payout)
-    )
+    (asserts! (> balance u0) (err u105))
+    (asserts! (>= p payout) (err u2))
+    (try! (burn-yes-all m tx-sender))
+    (as-contract (try! (contract-call? .sbtc-v3 transfer payout tx-sender rcpt)))
+    (map-set m-pool { m: m } { p: (- p payout) })
+    (ok payout)
   )
 )
 
 (define-private (redeem-no (m uint))
   (let (
-    (balance (default-to u0 (get bal (map-get? no-holdings { m: m, user: tx-sender }))))
-    (supply  (default-to u0 (get s   (map-get? no-supply   { m: m }))))
+    (balance (default-to u0 (get bal (map-get? no-holdings { m: m, user: tx-sender })) ))
+    (payout  (* balance UNIT))
     (p       (get-pool-or0 m))
     (rcpt    tx-sender)
   )
-    (asserts! (> supply u0) (err u105))
-    (let (
-      (is-last (is-eq balance supply))
-      (raw     (/ (* balance p) supply))
-      (payout  (if is-last p raw))
-    )
-      (asserts! (> payout u0) (err u2))
-      (try! (burn-no-all m tx-sender))
-      (as-contract (try! (contract-call? .sbtc-v2 transfer payout tx-sender rcpt)))
-      (map-set m-pool { m: m } { p: (- p payout) })
-      (recompute-b m)
-      (ok payout)
-    )
+    (asserts! (> balance u0) (err u105))
+    (asserts! (>= p payout) (err u2))
+    (try! (burn-no-all m tx-sender))
+    (as-contract (try! (contract-call? .sbtc-v3 transfer payout tx-sender rcpt)))
+    (map-set m-pool { m: m } { p: (- p payout) })
+    (ok payout)
   )
 )
 
 ;; --------------------------- withdraw surplus -----------------------
 (define-public (withdraw-surplus (m uint))
   (let (
-    (ys (default-to u0 (get s (map-get? yes-supply { m: m }))))
-    (ns (default-to u0 (get s (map-get? no-supply  { m: m }))))
+    (ys (default-to u0 (get s (map-get? yes-supply { m: m })) ))
+    (ns (default-to u0 (get s (map-get? no-supply  { m: m })) ))
     (p  (get-pool-or0 m))
-    (out (default-to "" (get o (map-get? m-outcome { m: m }))))
+    (out (default-to "" (get o (map-get? m-outcome { m: m })) ))
   )
     (begin
       (try! (only-admin))
@@ -696,9 +697,8 @@
           (asserts! (is-eq ys u0) (err u708))
           (asserts! (is-eq ns u0) (err u709)))
       (asserts! (> p u0) (err u710))
-      (as-contract (try! (contract-call? .sbtc-v2 transfer p tx-sender ADMIN)))
+      (as-contract (try! (contract-call? .sbtc-v3 transfer p tx-sender ADMIN)))
       (map-set m-pool { m: m } { p: u0 })
-      (recompute-b m)
       (ok true)
     )
   )
@@ -749,7 +749,7 @@
 (define-read-only (get-pool (m uint))        (get-pool-or0 m))
 (define-read-only (get-b (m uint))           (get-b-or0 m))
 (define-read-only (get-status (m uint))      (get-status-str m))
-(define-read-only (get-outcome (m uint))     (default-to "" (get o (map-get? m-outcome { m: m }))))
+(define-read-only (get-outcome (m uint))     (default-to "" (get o (map-get? m-outcome { m: m })) ))
 (define-read-only (get-initialized (m uint)) (get-initialized-bool m))
 (define-read-only (get-admin)                (some ADMIN))
 (define-read-only (get-fee-params)
@@ -763,10 +763,10 @@
 )
 (define-read-only (get-fee-recipients)
   {
-    drip: (var-get DRIP_VAULT),
-    brc20: (var-get BRC20_VAULT),
-    team: (var-get TEAM_WALLET),
-    lp: (var-get LP_WALLET),
+    drip:   (var-get DRIP_VAULT),
+    brc20:  (var-get BRC20_VAULT),
+    team:   (var-get TEAM_WALLET),
+    lp:     (var-get LP_WALLET),
     locked: (var-get fees-locked)
   }
 )

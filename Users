@@ -1,0 +1,14 @@
+Organization (Root)
+├─ Management account  [gobierno]  ← entras con SSO si quieres, pero NO deploy
+│   • Root: aws-root@bitcoinworld.app (MFA; emergencia)
+│   • Budgets + AWSBudgetsExecutionRole (para Attach SCP Freeze)
+│
+├─ OU: Production
+│   └─ Account: BitcoinWorld-Prod-Workloads  [producción]
+│       • Root: aws-root-prod@bitcoinworld.app (alias → aws-root@…)
+│       • SSO role creado: AWSReservedSSO_ReadOnly_<GUID>  (tu acceso normal a Prod)
+│       • (Pipeline) Rol mínimo de despliegue (OIDC)  ← despliega CI
+│
+└─ OU: Staging
+    └─ Account: (BitcoinWorld-Staging-Workloads) [a crear]
+        • SSO role: AWSReservedSSO_PowerUserAccess_<GUID> (tú despliegas aquí)

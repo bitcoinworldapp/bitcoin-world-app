@@ -12,22 +12,22 @@ local   = { url = "http://localhost:20443" }
 testnet = { url = "https://stacks-node-api.testnet.stacks.co" }
 mainnet = { url = "https://stacks-node-api.mainnet.stacks.co" }
 
-# Compile-time trait checker
+# Trait SIP-010
 [contracts.sip010-ft]
 path = "contracts/sip010-ft.clar"
 clarity_version = 2
 epoch = "2.1"
 
-# Our sbtc implementation
-[contracts.sbtc-v2]
-path       = "contracts/sbtc-v2.clar"
+# NUEVO: sbtc-v3
+[contracts.sbtc-v3]
+path       = "contracts/sbtc-v3.clar"
 depends_on = ["sip010-ft"]
 clarity_version = 2
 epoch = "2.1"
 
-# Market that calls into sbtc
-[contracts.market-factory-v2]
-path       = "contracts/market-factory-v2.clar"
-depends_on = ["sbtc"]
+# Market que llama a sbtc-v3
+[contracts.market-factory-v3]
+path       = "contracts/market-factory-v3.clar"
+depends_on = ["sbtc-v3"]
 clarity_version = 2
 epoch = "2.1"

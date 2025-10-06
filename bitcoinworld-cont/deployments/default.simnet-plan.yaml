@@ -65,13 +65,13 @@ plan:
             path: contracts/sip010-ft.clar
             clarity-version: 2
         - emulated-contract-publish:
-            contract-name: sbtc-v2
+            contract-name: sbtc-v3
             emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-            path: contracts/sbtc-v2.clar
+            path: contracts/sbtc-v3.clar
             clarity-version: 2
         - emulated-contract-publish:
-            contract-name: market-factory-v2
+            contract-name: market-factory-v3
             emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-            path: contracts/market-factory-v2.clar
+            path: contracts/market-factory-v3.clar
             clarity-version: 2
       epoch: "2.1"

@@ -9,10 +9,17 @@ plan:
     - id: 0
       transactions:
         - contract-publish:
-            contract-name: market-factory-v2
+            contract-name: sbtc-v3
             expected-sender: ST1PSHE32YTEE21FGYEVTA24N681KRGSQM4VF9XZP
-            cost: 249360
-            path: "contracts\\market-factory-v2.clar"
+            cost: 21419776
+            path: "contracts\\sbtc-v3.clar"
+            anchor-block-only: true
+            clarity-version: 2
+        - contract-publish:
+            contract-name: market-factory-v3
+            expected-sender: ST1PSHE32YTEE21FGYEVTA24N681KRGSQM4VF9XZP
+            cost: 21864491
+            path: "contracts\\market-factory-v3.clar"
             anchor-block-only: true
             clarity-version: 2
       epoch: "2.1"

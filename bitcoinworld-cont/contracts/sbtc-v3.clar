@@ -1,18 +1,15 @@
 ;; ------------------------------------------------------------
-;; sBTC SIP-010 (+burn) minimo y compatible con tu setup actual
+;; sBTC SIP-010 (minimal) + burn
+;; Integer token with 6-decimal economic scale (1 sBTC = 1_000_000 units)
 ;; ------------------------------------------------------------
 (use-trait sip010-ft .sip010-ft.sip010-ft)
 (impl-trait .sip010-ft.sip010-ft)
 
 (define-constant err-owner-only (err u100))
-
 (define-constant contract-owner tx-sender) ;; deployer = owner
 
 (define-fungible-token sbtc)
 
-;; ---- Trait-required ----
-
-;; El que transfiere debe firmar: sender == tx-sender
 (define-public (transfer (amount uint) (sender principal) (recipient principal))
   (begin
     (asserts! (is-eq sender tx-sender) err-owner-only)
